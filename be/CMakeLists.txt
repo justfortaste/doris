@@ -376,7 +376,7 @@ endif()
 # For CMAKE_BUILD_TYPE=Release
 #   -O3: Enable all compiler optimizations
 #   -DNDEBUG: Turn off dchecks/asserts/debug only code.
-set(CXX_FLAGS_RELEASE "${CXX_GCC_FLAGS} -O3 -DNDEBUG")
+set(CXX_FLAGS_RELEASE "${CXX_GCC_FLAGS} -O3 -DNDEBUG -Wno-backend-plugin")
 set(CXX_FLAGS_ASAN "${CXX_GCC_FLAGS} -O0 -fsanitize=address -fsanitize=undefined -fno-strict-aliasing -fno-sanitize=alignment,signed-integer-overflow,float-cast-overflow -DUNDEFINED_BEHAVIOR_SANITIZER -DADDRESS_SANITIZER")
 set(CXX_FLAGS_LSAN "${CXX_GCC_FLAGS} -O0 -fsanitize=leak -DLEAK_SANITIZER")
 ## Use for BE-UT
@@ -413,6 +413,38 @@ endif()
 
 # Add flags that are common across build types
 set(CMAKE_CXX_FLAGS "${CXX_COMMON_FLAGS} ${CMAKE_CXX_FLAGS} ${EXTRA_CXX_FLAGS}")
+
+message(STATUS "===========before fprofile CXX Flags: ${CMAKE_CXX_FLAGS}")
+OPTION(FPROFILE_GENERATE "Add -fprofile-generate" OFF)
+IF(FPROFILE_GENERATE)
+   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-generate=${FPROFILE_DIR}")
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-generate=${FPROFILE_DIR}")
+   message(STATUS "===============  fprofile generate ")
+ENDIF()
+
+OPTION(FPROFILE_USE "Add -fprofile-use" OFF)
+IF(FPROFILE_USE)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-use=${FPROFILE_DIR}")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-use=${FPROFILE_DIR}")
+  message(STATUS "===============  fprofile use ")
+ENDIF()
+
+IF(FPROFILE_GENERATE AND FPROFILE_USE)
+  MESSAGE(FATAL_ERROR "Cannot combine -fprofile-generate and -fprofile-use")
+ENDIF()
+
+IF(FPROFILE_GENERATE OR FPROFILE_USE)
+  # SET(REPRODUCIBLE_BUILD ON CACHE INTERNAL "")
+  # Build fails with lld, so switch it off.
+  SET(USE_LD_LLD OFF CACHE INTERNAL "")
+ENDIF()
+
+IF(FPROFILE_USE)
+  # LTO combined with PGO boosts performance even more.
+  SET(WITH_LTO_DEFAULT ON CACHE INTERNAL "")
+ENDIF()
+message(STATUS "===========after fprofile CXX Flags: ${CMAKE_CXX_FLAGS}")
+
 
 set(CMAKE_C_FLAGS ${CMAKE_CXX_FLAGS})
 

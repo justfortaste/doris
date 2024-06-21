@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -125,6 +126,8 @@ if ! OPTS="$(getopt \
     -o '' \
     -l 'fe' \
     -l 'be' \
+    -l 'stage1' \
+    -l 'stage2' \
     -l 'cloud' \
     -l 'broker' \
     -l 'meta-tool' \
@@ -141,6 +144,11 @@ if ! OPTS="$(getopt \
     -- "$@")"; then
     usage
 fi
+
+profile_generate=0
+profile_use=0
+pwd=`pwd`
+profile_dir="$pwd/profile-data1"
 
 eval set -- "${OPTS}"
 
@@ -224,6 +232,16 @@ else
             DENABLE_CLANG_COVERAGE='ON'
             shift
             ;;
+ 	--stage1)
+	    profile_generate=ON
+            profile_use=OFF
+            shift
+        ;;
+	 --stage2)
+           profile_generate=OFF
+           profile_use=ON
+           shift
+        ;;
         -h)
             HELP=1
             shift
@@ -542,6 +560,7 @@ FE_MODULES="$(
     echo "${modules[*]}"
 )"
 
+
 # Clean and build Backend
 if [[ "${BUILD_BE}" -eq 1 ]]; then
     update_submodule "be/src/apache-orc" "apache-orc" "https://github.com/apache/doris-thirdparty/archive/refs/heads/orc.tar.gz"
@@ -565,6 +584,7 @@ if [[ "${BUILD_BE}" -eq 1 ]]; then
     echo "-- Use ccache: ${CMAKE_USE_CCACHE}"
     echo "-- Extra cxx flags: ${EXTRA_CXX_FLAGS:-}"
     echo "-- Build fs benchmark tool: ${BUILD_FS_BENCHMARK}"
+    echo "========= profile_dir=$profile_dir profile_generate=$profile_generate profile_use=$profile_use"
 
     mkdir -p "${CMAKE_BUILD_DIR}"
     cd "${CMAKE_BUILD_DIR}"
@@ -583,6 +603,9 @@ if [[ "${BUILD_BE}" -eq 1 ]]; then
         -DSTRIP_DEBUG_INFO="${STRIP_DEBUG_INFO}" \
         -DUSE_DWARF="${USE_DWARF}" \
         -DUSE_UNWIND="${USE_UNWIND}" \
+        -DFPROFILE_DIR=$profile_dir                 \
+        -DFPROFILE_GENERATE=$profile_generate       \
+        -DFPROFILE_USE=$profile_use                 \
         -DDISPLAY_BUILD_TIME="${DISPLAY_BUILD_TIME}" \
         -DENABLE_PCH="${ENABLE_PCH}" \
         -DUSE_MEM_TRACKER="${USE_MEM_TRACKER}" \
