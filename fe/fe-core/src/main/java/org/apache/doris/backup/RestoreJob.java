@@ -47,6 +47,7 @@ import org.apache.doris.catalog.Replica.ReplicaState;
 import org.apache.doris.catalog.ReplicaAllocation;
 import org.apache.doris.catalog.Resource;
 import org.apache.doris.catalog.ResourceMgr;
+import org.apache.doris.catalog.S3Resource;
 import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.TableIf.TableType;
 import org.apache.doris.catalog.Tablet;
@@ -67,6 +68,10 @@ import org.apache.doris.common.util.PropertyAnalyzer;
 import org.apache.doris.common.util.TimeUtils;
 import org.apache.doris.datasource.InternalCatalog;
 import org.apache.doris.datasource.property.S3ClientBEProperties;
+import org.apache.doris.policy.Policy;
+import org.apache.doris.policy.PolicyMgr;
+import org.apache.doris.policy.PolicyTypeEnum;
+import org.apache.doris.policy.StoragePolicy;
 import org.apache.doris.resource.Tag;
 import org.apache.doris.task.AgentBatchTask;
 import org.apache.doris.task.AgentTask;
@@ -104,6 +109,7 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -161,6 +167,7 @@ public class RestoreJob extends AbstractJob {
     private List<Pair<String, Partition>> restoredPartitions = Lists.newArrayList();
     private List<Table> restoredTbls = Lists.newArrayList();
     private List<Resource> restoredResources = Lists.newArrayList();
+    private List<StoragePolicy> storagePolicies = Lists.newArrayList();
 
     // save all restored partitions' version info which are already exist in catalog
     // table id -> partition id -> (version, version hash)
@@ -631,6 +638,19 @@ public class RestoreJob extends AbstractJob {
             }
         }
 
+        for (BackupJobInfo.BackupS3ResourceInfo backupS3ResourceInfo : jobInfo.newBackupObjects.s3Resources) {
+            Resource resource = Env.getCurrentEnv().getResourceMgr().getResource(backupS3ResourceInfo.name);
+            if (resource == null) {
+                continue;
+            }
+            if (resource.getType() != Resource.ResourceType.S3) {
+                status = new Status(ErrCode.COMMON_ERROR,
+                    "The local resource " + resource.getName()
+                        + " with the same name but a different type of backup meta.");
+                return;
+            }
+        }
+
         // the new tablets -> { local tablet, schema hash, storage medium }, used in atomic restore.
         Map<Long, TabletRef> tabletBases = new HashMap<>();
 
@@ -923,6 +943,12 @@ public class RestoreJob extends AbstractJob {
         if (!status.ok()) {
             return;
         }
+        // check and restore storage policies
+        checkAndRestoreStoragePolicies();
+        if (!status.ok()) {
+            return;
+        }
+
         if (LOG.isDebugEnabled()) {
             LOG.debug("finished to restore resources. {}", this.jobId);
         }
@@ -1212,12 +1238,72 @@ public class RestoreJob extends AbstractJob {
             } else {
                 try {
                     // restore resource
-                    resourceMgr.createResource(remoteOdbcResource, false);
+                    resourceMgr.createResource(remoteOdbcResource);
                 } catch (DdlException e) {
                     status = new Status(ErrCode.COMMON_ERROR, e.getMessage());
                     return;
                 }
                 restoredResources.add(remoteOdbcResource);
+            }
+        }
+
+        for (BackupJobInfo.BackupS3ResourceInfo backupS3ResourceInfo : jobInfo.newBackupObjects.s3Resources) {
+            String backupResourceName = backupS3ResourceInfo.name;
+            Resource localResource = resourceMgr.getResource(backupResourceName);
+            S3Resource remoteS3Resource = (S3Resource) backupMeta.getResource(backupResourceName);
+            if (localResource != null) {
+                if (localResource.getType() != Resource.ResourceType.S3) {
+                    status = new Status(ErrCode.COMMON_ERROR, "The type of local resource "
+                        + backupResourceName + " is not same as restored resource");
+                    return;
+                }
+                S3Resource localS3Resource = (S3Resource) localResource;
+                if (localS3Resource.getSignature(BackupHandler.SIGNATURE_VERSION)
+                        != remoteS3Resource.getSignature(BackupHandler.SIGNATURE_VERSION)) {
+                    status = new Status(ErrCode.COMMON_ERROR, "S3 resource "
+                        + jobInfo.getAliasByOriginNameIfSet(backupResourceName)
+                        + " already exist but with different properties");
+                    return;
+                }
+            } else {
+                try {
+                    // restore resource
+                    resourceMgr.createResource(remoteS3Resource);
+                } catch (DdlException e) {
+                    status = new Status(ErrCode.COMMON_ERROR, e.getMessage());
+                    return;
+                }
+                restoredResources.add(remoteS3Resource);
+            }
+        }
+    }
+
+    private void checkAndRestoreStoragePolicies() {
+        PolicyMgr policyMgr = Env.getCurrentEnv().getPolicyMgr();
+        for (BackupJobInfo.BackupStoragePolicyInfo backupStoragePolicyInfo : jobInfo.newBackupObjects.storagePolicies) {
+            String backupStoragePoliceName = backupStoragePolicyInfo.name;
+            Optional<Policy> localPolicy = policyMgr.findPolicy(backupStoragePoliceName,
+                    PolicyTypeEnum.STORAGE);
+            StoragePolicy backupStoargePolicy = backupMeta.getStoragePolicy(backupStoragePoliceName);
+            if (localPolicy.isPresent()) {
+                StoragePolicy localStoargePolicy = (StoragePolicy) localPolicy.get();
+                if (localStoargePolicy.getVersion()
+                        != backupStoargePolicy.getVersion()) {
+                    status = new Status(ErrCode.COMMON_ERROR, "Storage policy "
+                            + jobInfo.getAliasByOriginNameIfSet(backupStoragePoliceName)
+                            + " already exist but with different properties");
+                    return;
+                }
+
+            } else {
+                // restore storage policy
+                try {
+                    policyMgr.replayCreate(backupStoargePolicy);
+                    Env.getCurrentEnv().getEditLog().logCreatePolicy(backupStoargePolicy);
+                } catch (Exception e) {
+                    LOG.error("restore user property fail should not happen", e);
+                }
+                storagePolicies.add(backupStoargePolicy);
             }
         }
     }
@@ -1570,6 +1656,12 @@ public class RestoreJob extends AbstractJob {
         ResourceMgr resourceMgr = Env.getCurrentEnv().getResourceMgr();
         for (Resource resource : restoredResources) {
             resourceMgr.replayCreateResource(resource);
+        }
+
+        // restored storage policy
+        PolicyMgr policyMgr = Env.getCurrentEnv().getPolicyMgr();
+        for (StoragePolicy storagePolicy : storagePolicies) {
+            policyMgr.replayCreate(storagePolicy);
         }
 
         LOG.info("replay check and prepare meta. {}", this);
@@ -2057,6 +2149,7 @@ public class RestoreJob extends AbstractJob {
             restoredPartitions.clear();
             restoredTbls.clear();
             restoredResources.clear();
+            storagePolicies.clear();
 
             // release snapshot before clearing snapshotInfos
             releaseSnapshots();
@@ -2312,6 +2405,13 @@ public class RestoreJob extends AbstractJob {
                 LOG.info("remove restored resource when cancelled: {}", resource.getName());
                 resourceMgr.dropResource(resource);
             }
+
+            // remove restored storage policy
+            PolicyMgr policyMgr = Env.getCurrentEnv().getPolicyMgr();
+            for (StoragePolicy storagePolicy : storagePolicies) {
+                LOG.info("remove restored storage polciy when cancelled: {}", storagePolicy.getName());
+                policyMgr.replayDrop(storagePolicy);
+            }
         }
 
         if (!isReplay) {
@@ -2545,6 +2645,11 @@ public class RestoreJob extends AbstractJob {
             resource.write(out);
         }
 
+        out.writeInt(storagePolicies.size());
+        for (StoragePolicy policy : storagePolicies) {
+            policy.write(out);
+        }
+
         // write properties
         out.writeInt(properties.size());
         for (Map.Entry<String, String> entry : properties.entrySet()) {
@@ -2620,6 +2725,12 @@ public class RestoreJob extends AbstractJob {
         size = in.readInt();
         for (int i = 0; i < size; i++) {
             restoredResources.add(Resource.read(in));
+        }
+
+        // restored storage policy
+        size = in.readInt();
+        for (int i = 0; i < size; i++) {
+            storagePolicies.add(StoragePolicy.read(in));
         }
 
         // read properties
