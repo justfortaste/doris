@@ -20,6 +20,7 @@ package org.apache.doris.backup;
 import org.apache.doris.analysis.BackupStmt.BackupContent;
 import org.apache.doris.analysis.PartitionNames;
 import org.apache.doris.analysis.TableRef;
+import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.backup.RestoreFileMapping.IdChain;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.MaterializedIndex;
@@ -39,8 +40,11 @@ import org.apache.doris.common.FeMetaVersion;
 import org.apache.doris.common.Version;
 import org.apache.doris.common.io.Text;
 import org.apache.doris.common.io.Writable;
+import org.apache.doris.mysql.privilege.Role;
+import org.apache.doris.mysql.privilege.User;
 import org.apache.doris.persist.gson.GsonPostProcessable;
 import org.apache.doris.persist.gson.GsonUtils;
+import org.apache.doris.resource.workloadgroup.WorkloadGroup;
 import org.apache.doris.thrift.TNetworkAddress;
 
 import com.google.common.base.Joiner;
@@ -335,6 +339,14 @@ public class BackupJobInfo implements Writable, GsonPostProcessable {
         public List<BackupOdbcTableInfo> odbcTableList = Lists.newArrayList();
         @SerializedName("odbc_resource_list")
         public List<BackupOdbcResourceInfo> odbcResourceList = Lists.newArrayList();
+        @SerializedName("user_list")
+        public List<BackupUserInfo> userList = Lists.newArrayList();
+        @SerializedName("role_list")
+        public List<BackupRoleInfo> roleList = Lists.newArrayList();
+        @SerializedName("catalog_list")
+        public List<BackupCatalogInfo> catalogList = Lists.newArrayList();
+        @SerializedName("workload_group_list")
+        public List<BackupWorkloadGroupInfo> workloadGroupList = Lists.newArrayList();
 
         public static BriefBackupJobInfo fromBackupJobInfo(BackupJobInfo backupJobInfo) {
             BriefBackupJobInfo briefBackupJobInfo = new BriefBackupJobInfo();
@@ -352,6 +364,10 @@ public class BackupJobInfo implements Writable, GsonPostProcessable {
             briefBackupJobInfo.viewList = backupJobInfo.newBackupObjects.views;
             briefBackupJobInfo.odbcTableList = backupJobInfo.newBackupObjects.odbcTables;
             briefBackupJobInfo.odbcResourceList = backupJobInfo.newBackupObjects.odbcResources;
+            briefBackupJobInfo.userList = backupJobInfo.newBackupObjects.users;
+            briefBackupJobInfo.roleList = backupJobInfo.newBackupObjects.roles;
+            briefBackupJobInfo.catalogList = backupJobInfo.newBackupObjects.catalogs;
+            briefBackupJobInfo.workloadGroupList = backupJobInfo.newBackupObjects.workloadGroups;
             return briefBackupJobInfo;
         }
     }
@@ -370,6 +386,14 @@ public class BackupJobInfo implements Writable, GsonPostProcessable {
         public List<BackupOdbcTableInfo> odbcTables = Lists.newArrayList();
         @SerializedName("odbc_resources")
         public List<BackupOdbcResourceInfo> odbcResources = Lists.newArrayList();
+        @SerializedName("user")
+        public List<BackupUserInfo> users = Lists.newArrayList();
+        @SerializedName("role")
+        public List<BackupRoleInfo> roles = Lists.newArrayList();
+        @SerializedName("catalogs")
+        public List<BackupCatalogInfo> catalogs = Lists.newArrayList();
+        @SerializedName("workloadGroups")
+        public List<BackupWorkloadGroupInfo> workloadGroups = Lists.newArrayList();
     }
 
     public static class BackupOlapTableInfo {
@@ -484,6 +508,26 @@ public class BackupJobInfo implements Writable, GsonPostProcessable {
     }
 
     public static class BackupOdbcResourceInfo {
+        @SerializedName("name")
+        public String name;
+    }
+
+    public static class BackupUserInfo {
+        @SerializedName("userIdentity")
+        public UserIdentity userIdentity;
+    }
+
+    public static class BackupRoleInfo {
+        @SerializedName("name")
+        public String name;
+    }
+
+    public static class BackupCatalogInfo {
+        @SerializedName("name")
+        public String name;
+    }
+
+    public static class BackupWorkloadGroupInfo {
         @SerializedName("name")
         public String name;
     }
@@ -687,6 +731,37 @@ public class BackupJobInfo implements Writable, GsonPostProcessable {
                 backupOdbcResourceInfo.name = odbcCatalogResource.getName();
                 jobInfo.newBackupObjects.odbcResources.add(backupOdbcResourceInfo);
             }
+        }
+        // users
+        List<User> userList = backupMeta.getUserList();
+        for (User user : userList) {
+            BackupUserInfo backupUserInfo = new BackupUserInfo();
+            backupUserInfo.userIdentity = user.getUserIdentity();
+            jobInfo.newBackupObjects.users.add(backupUserInfo);
+        }
+
+        // roles
+        List<Role> roleList = backupMeta.getRoleList();
+        for (Role role : roleList) {
+            BackupRoleInfo backupRoleInfo = new BackupRoleInfo();
+            backupRoleInfo.name = role.getRoleName();
+            jobInfo.newBackupObjects.roles.add(backupRoleInfo);
+        }
+
+        // catalogs
+        List<BackupCatalogMeta> catalogs = backupMeta.getCatalogs();
+        for (BackupCatalogMeta catalog : catalogs) {
+            BackupCatalogInfo backupCatalogInfo = new BackupCatalogInfo();
+            backupCatalogInfo.name = catalog.getCatalogName();
+            jobInfo.newBackupObjects.catalogs.add(backupCatalogInfo);
+        }
+
+        // workloadGroups
+        List<WorkloadGroup> workloadGroups = backupMeta.getWorkloadGroups();
+        for (WorkloadGroup workloadGroup : workloadGroups) {
+            BackupWorkloadGroupInfo backupWorkloadGroupInfo = new BackupWorkloadGroupInfo();
+            backupWorkloadGroupInfo.name = workloadGroup.getName();
+            jobInfo.newBackupObjects.workloadGroups.add(backupWorkloadGroupInfo);
         }
 
         return jobInfo;

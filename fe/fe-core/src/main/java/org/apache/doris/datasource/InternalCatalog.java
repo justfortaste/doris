@@ -3950,4 +3950,9 @@ public class InternalCatalog implements CatalogIf<Database> {
         }
         return dbToDataSize;
     }
+
+    @Override
+    public InternalCatalog clone() {
+        return null;
+    }
 }

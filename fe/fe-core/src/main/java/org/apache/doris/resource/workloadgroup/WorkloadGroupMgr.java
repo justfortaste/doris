@@ -689,4 +689,19 @@ public class WorkloadGroupMgr extends MasterDaemon implements Writable, GsonPost
             return result;
         }
     }
+
+    public List<WorkloadGroup> getAllWorkloadGroupsCopied() {
+        List<WorkloadGroup> workloadGroups = Lists.newArrayList();
+        readLock();
+        try {
+            // get all rules
+            for (Map.Entry<String, WorkloadGroup> entry : nameToWorkloadGroup.entrySet()) {
+                WorkloadGroup workloadGroup = entry.getValue();
+                workloadGroups.add(workloadGroup.clone());
+            }
+        } finally {
+            readUnlock();
+        }
+        return workloadGroups;
+    }
 }

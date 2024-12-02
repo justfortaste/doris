@@ -18,7 +18,11 @@
 package org.apache.doris.backup;
 
 import org.apache.doris.analysis.BackupStmt.BackupContent;
+import org.apache.doris.analysis.CreateCatalogStmt;
+import org.apache.doris.analysis.CreateWorkloadGroupStmt;
+import org.apache.doris.analysis.PasswordOptions;
 import org.apache.doris.analysis.RestoreStmt;
+import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.backup.BackupJobInfo.BackupIndexInfo;
 import org.apache.doris.backup.BackupJobInfo.BackupOlapTableInfo;
 import org.apache.doris.backup.BackupJobInfo.BackupPartitionInfo;
@@ -68,9 +72,17 @@ import org.apache.doris.common.util.PropertyAnalyzer;
 import org.apache.doris.common.util.TimeUtils;
 import org.apache.doris.datasource.InternalCatalog;
 import org.apache.doris.datasource.property.S3ClientBEProperties;
+import org.apache.doris.mysql.privilege.PasswordPolicy;
+import org.apache.doris.mysql.privilege.Role;
+import org.apache.doris.mysql.privilege.User;
+import org.apache.doris.mysql.privilege.UserProperty;
 import org.apache.doris.persist.gson.GsonPostProcessable;
 import org.apache.doris.persist.gson.GsonUtils;
+import org.apache.doris.policy.Policy;
+import org.apache.doris.policy.RowPolicy;
 import org.apache.doris.resource.Tag;
+import org.apache.doris.resource.workloadgroup.WorkloadGroup;
+import org.apache.doris.resource.workloadgroup.WorkloadGroupMgr;
 import org.apache.doris.task.AgentBatchTask;
 import org.apache.doris.task.AgentTask;
 import org.apache.doris.task.AgentTaskExecutor;
@@ -111,6 +123,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
@@ -123,6 +136,9 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
     private static final String PROP_CLEAN_TABLES = RestoreStmt.PROP_CLEAN_TABLES;
     private static final String PROP_CLEAN_PARTITIONS = RestoreStmt.PROP_CLEAN_PARTITIONS;
     private static final String PROP_ATOMIC_RESTORE = RestoreStmt.PROP_ATOMIC_RESTORE;
+    private static final String PROP_RESERVE_PRIVILEGE = RestoreStmt.PROP_RESERVE_PRIVILEGE;
+    private static final String PROP_RESERVE_CATALOG = RestoreStmt.PROP_RESERVE_CATALOG;
+    private static final String PROP_RESERVE_WORKLOAD_GROUP = RestoreStmt.PROP_RESERVE_WORKLOAD_GROUP;
     private static final String ATOMIC_RESTORE_TABLE_PREFIX = "__doris_atomic_restore_prefix__";
 
     private static final Logger LOG = LogManager.getLogger(RestoreJob.class);
@@ -210,6 +226,12 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
     private boolean isCleanPartitions = false;
     // Whether to restore the data into a temp table, and then replace the origin one.
     private boolean isAtomicRestore = false;
+    // Whether to restore privileges
+    private boolean reservePrivilege = false;
+    // Whether to restore catalogs
+    private boolean reserveCatalog = false;
+    // Whether to restore workload group
+    private boolean reserveWorkloadGroup = false;
 
     // restore properties
     @SerializedName("prop")
@@ -227,7 +249,8 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
 
     public RestoreJob(String label, String backupTs, long dbId, String dbName, BackupJobInfo jobInfo, boolean allowLoad,
             ReplicaAllocation replicaAlloc, long timeoutMs, int metaVersion, boolean reserveReplica,
-            boolean reserveDynamicPartitionEnable, boolean isBeingSynced, boolean isCleanTables,
+            boolean reserveDynamicPartitionEnable, boolean reservePrivilege, boolean reserveCatalog,
+            boolean reserveWorkloadGroup, boolean isBeingSynced, boolean isCleanTables,
             boolean isCleanPartitions, boolean isAtomicRestore, Env env, long repoId) {
         super(JobType.RESTORE, label, dbId, dbName, timeoutMs, env, repoId);
         this.backupTimestamp = backupTs;
@@ -246,21 +269,28 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
         this.isCleanTables = isCleanTables;
         this.isCleanPartitions = isCleanPartitions;
         this.isAtomicRestore = isAtomicRestore;
+        this.reservePrivilege = reservePrivilege;
+        this.reserveCatalog = reserveCatalog;
+        this.reserveWorkloadGroup = reserveWorkloadGroup;
         properties.put(PROP_RESERVE_REPLICA, String.valueOf(reserveReplica));
         properties.put(PROP_RESERVE_DYNAMIC_PARTITION_ENABLE, String.valueOf(reserveDynamicPartitionEnable));
         properties.put(PROP_IS_BEING_SYNCED, String.valueOf(isBeingSynced));
         properties.put(PROP_CLEAN_TABLES, String.valueOf(isCleanTables));
         properties.put(PROP_CLEAN_PARTITIONS, String.valueOf(isCleanPartitions));
         properties.put(PROP_ATOMIC_RESTORE, String.valueOf(isAtomicRestore));
+        properties.put(PROP_RESERVE_PRIVILEGE, String.valueOf(reservePrivilege));
+        properties.put(PROP_RESERVE_CATALOG, String.valueOf(reserveCatalog));
+        properties.put(PROP_RESERVE_WORKLOAD_GROUP, String.valueOf(reserveWorkloadGroup));
     }
 
     public RestoreJob(String label, String backupTs, long dbId, String dbName, BackupJobInfo jobInfo, boolean allowLoad,
             ReplicaAllocation replicaAlloc, long timeoutMs, int metaVersion, boolean reserveReplica,
-            boolean reserveDynamicPartitionEnable, boolean isBeingSynced, boolean isCleanTables,
+            boolean reserveDynamicPartitionEnable,  boolean reservePrivilege, boolean reserveCatalog,
+            boolean reserveWorkloadGroup, boolean isBeingSynced, boolean isCleanTables,
             boolean isCleanPartitions, boolean isAtomicRestore, Env env, long repoId, BackupMeta backupMeta) {
         this(label, backupTs, dbId, dbName, jobInfo, allowLoad, replicaAlloc, timeoutMs, metaVersion, reserveReplica,
-                reserveDynamicPartitionEnable, isBeingSynced, isCleanTables, isCleanPartitions, isAtomicRestore, env,
-                repoId);
+                reserveDynamicPartitionEnable, reservePrivilege, reserveCatalog, reserveWorkloadGroup, isBeingSynced,
+                isCleanTables, isCleanPartitions, isAtomicRestore, env, repoId);
         this.backupMeta = backupMeta;
     }
 
@@ -957,6 +987,11 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
         if (!status.ok()) {
             return;
         }
+        // check and restore global info
+        checkAndRestoreGlobalInfo();
+        if (!status.ok()) {
+            return;
+        }
         if (LOG.isDebugEnabled()) {
             LOG.debug("finished to restore resources. {}", this.jobId);
         }
@@ -1260,6 +1295,150 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                 }
                 restoredResources.add(remoteOdbcResource);
             }
+        }
+    }
+
+    private void checkAndRestorePrivileges() {
+        List<User> users = backupMeta.getUserList();
+        List<UserIdentity> localUsers = Lists.newArrayList();
+
+        for (User user : users) {
+
+            if (Env.getCurrentEnv().getAuth().doesUserExist(user.getUserIdentity())) {
+                localUsers.add(user.getUserIdentity());
+                continue;
+            }
+            try {
+                Env.getCurrentEnv().getAuth().createUserInternal(user.getUserIdentity(), null,
+                        user.getPassword().getPassword(), true, PasswordOptions.UNSET_OPTION,
+                        user.getComment(), UUID.randomUUID().toString(), false);
+            } catch (DdlException e) {
+                LOG.error("restore user fail should not happen", e);
+            }
+        }
+
+        List<UserProperty> userProperties = backupMeta.getUserProperties();
+        for (UserProperty userProperty : userProperties) {
+            for (UserIdentity localIdentity : localUsers) {
+                if (localIdentity.getUser().equals(userProperty.getQualifiedUser())) {
+                    continue;
+                }
+            }
+            try {
+                List<Pair<String, String>> properties = Lists.newArrayList();
+                List<List<String>> list = userProperty.fetchProperty();
+                for (List<String> row : list) {
+                    String key = row.get(0);
+                    String value = row.get(1);
+                    if (key.equals(UserProperty.PROP_RESOURCE_TAGS)) {
+                        continue;
+                    }
+
+                    if (key.equals(UserProperty.PROP_WORKLOAD_GROUP) && !reserveWorkloadGroup) {
+                        properties.add(Pair.of(key, WorkloadGroupMgr.DEFAULT_GROUP_NAME));
+                        continue;
+                    }
+
+                    if (!value.equals("")) {
+                        properties.add(Pair.of(key, value));
+                    }
+
+                }
+                Env.getCurrentEnv().getAuth().updateUserPropertyInternal(userProperty.getQualifiedUser(),
+                        properties, false /* is replay */);
+            } catch (Exception e) {
+                LOG.error("restore user property fail should not happen", e);
+            }
+        }
+
+        Map<UserIdentity, PasswordPolicy> policyMap = backupMeta.getPolicyMap();
+        for (Map.Entry<UserIdentity, PasswordPolicy> entry : policyMap.entrySet()) {
+            UserIdentity identity = entry.getKey();
+            PasswordPolicy passwordPolicy = entry.getValue();
+            for (UserIdentity localIdentity : localUsers) {
+                if (localIdentity.equals(identity)) {
+                    continue;
+                }
+            }
+            try {
+                PasswordOptions passwordOptions = new PasswordOptions(passwordPolicy.getExpirePolicy().expirationSecond,
+                        passwordPolicy.getHistoryPolicy().historyNum, -2,
+                        passwordPolicy.getFailedLoginPolicy().numFailedLogin,
+                        passwordPolicy.getFailedLoginPolicy().passwordLockSeconds, -2);
+                Env.getCurrentEnv().getAuth().getPasswdPolicyManager().updatePolicy(identity, null, passwordOptions);
+            } catch (Exception e) {
+                LOG.error("restore user property fail should not happen", e);
+            }
+        }
+
+        List<Policy> rowPolicies = backupMeta.getRowPolicies();
+        for (Policy policy : rowPolicies) {
+            RowPolicy rowPolicy = (RowPolicy) policy;
+            if (Env.getCurrentEnv().getPolicyMgr().existPolicy(policy)) {
+                continue;
+            }
+
+            try {
+                Env.getCurrentEnv().getPolicyMgr().createRowPolicy(rowPolicy);
+            } catch (Exception e) {
+                LOG.error("restore user property fail should not happen", e);
+            }
+        }
+
+        List<Role> roles = backupMeta.getRoleList();
+        for (Role role : roles) {
+            try {
+                Env.getCurrentEnv().getAuth().createRoleInternal(role.getRoleName(),
+                        true, role.getComment(), false);
+                Env.getCurrentEnv().getAuth().grant(role, backupMeta.getUsersByRole(role.getRoleName()));
+            } catch (DdlException e) {
+                LOG.error("should not happen", e);
+            }
+        }
+    }
+
+    private void checkAndRestoreCatalogs() {
+        List<BackupCatalogMeta> catalogs = backupMeta.getCatalogs();
+        for (BackupCatalogMeta catalog : catalogs) {
+            if (Env.getCurrentEnv().getCatalogMgr().getCatalog(catalog.getCatalogName()) != null) {
+                continue;
+            }
+            try {
+                CreateCatalogStmt stmt = new CreateCatalogStmt(false, catalog.getCatalogName(), catalog.getResource(),
+                        catalog.getProperties(), catalog.getComment());
+                Env.getCurrentEnv().getCatalogMgr().createCatalog(stmt);
+            } catch (Exception e) {
+                LOG.error("restore catalog fail should not happen", e);
+            }
+        }
+    }
+
+    private void checkAndRestoreWorkloadGroups() {
+        List<WorkloadGroup> workloadGroups = backupMeta.getWorkloadGroups();
+        for (WorkloadGroup workloadGroup : workloadGroups) {
+            if (Env.getCurrentEnv().getWorkloadGroupMgr().isWorkloadGroupExists(workloadGroup.getName())) {
+                continue;
+            }
+
+            try {
+                CreateWorkloadGroupStmt stmt = new CreateWorkloadGroupStmt(false, workloadGroup.getName(),
+                        workloadGroup.getProperties());
+                Env.getCurrentEnv().getWorkloadGroupMgr().createWorkloadGroup(stmt);
+            } catch (Exception e) {
+                LOG.error("restore workloadgroup fail should not happen", e);
+            }
+        }
+    }
+
+    private void checkAndRestoreGlobalInfo() {
+        if (reservePrivilege) {
+            checkAndRestorePrivileges();
+        }
+        if (reserveCatalog) {
+            checkAndRestoreCatalogs();
+        }
+        if (reserveWorkloadGroup) {
+            checkAndRestoreWorkloadGroups();
         }
     }
 
