@@ -167,12 +167,18 @@ public class BackupStmt extends AbstractBackupStmt implements NotFallbackInParse
             copiedProperties.remove(PROP_BACKUP_WORKLOAD_GROUP);
         }
 
-        if (properties.get(PROP_BACKUP_PRIV) == null
-                && properties.get(PROP_BACKUP_CATALOG) == null
-                && properties.get(PROP_BACKUP_WORKLOAD_GROUP) == null) {
-            backupPriv = true;
-            backupCatalog = true;
-            backupWorkloadGroup = true;
+        if (isBackupGlobal()) {
+            if (properties.get(PROP_BACKUP_PRIV) == null
+                    && properties.get(PROP_BACKUP_CATALOG) == null
+                    && properties.get(PROP_BACKUP_WORKLOAD_GROUP) == null) {
+                backupPriv = true;
+                backupCatalog = true;
+                backupWorkloadGroup = true;
+            }
+        } else {
+            backupPriv = false;
+            backupCatalog = false;
+            backupWorkloadGroup = false;
         }
 
         if (!copiedProperties.isEmpty()) {

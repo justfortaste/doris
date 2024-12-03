@@ -274,12 +274,18 @@ public class RestoreStmt extends AbstractBackupStmt implements NotFallbackInPars
             copiedProperties.remove(PROP_RESERVE_WORKLOAD_GROUP);
         }
 
-        if (!properties.containsKey(PROP_RESERVE_PRIVILEGE)
-                && !properties.containsKey(PROP_RESERVE_CATALOG)
-                && !properties.containsKey(PROP_RESERVE_WORKLOAD_GROUP)) {
-            reservePrivilege = true;
-            reserveCatalog = true;
-            reserveWorkloadGroup = true;
+        if (isBackupGlobal()) {
+            if (!properties.containsKey(PROP_RESERVE_PRIVILEGE)
+                    && !properties.containsKey(PROP_RESERVE_CATALOG)
+                    && !properties.containsKey(PROP_RESERVE_WORKLOAD_GROUP)) {
+                reservePrivilege = true;
+                reserveCatalog = true;
+                reserveWorkloadGroup = true;
+            }
+        } else {
+            reservePrivilege = false;
+            reserveCatalog = false;
+            reserveWorkloadGroup = false;
         }
 
         if (!copiedProperties.isEmpty()) {
