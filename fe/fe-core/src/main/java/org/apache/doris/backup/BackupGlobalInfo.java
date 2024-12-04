@@ -59,13 +59,13 @@ public class BackupGlobalInfo implements Writable {
     protected Map<String, UserProperty> propertyMap = Maps.newHashMap();
     // rowPolicy name -> policy
     @SerializedName(value = "rowPolicies")
-    private List<Policy> rowPolicies = null;
+    private List<Policy> rowPolicies = Lists.newArrayList();
     @SerializedName(value = "sqlBlockRules")
-    private List<SqlBlockRule> sqlBlockRules = null;
+    private List<SqlBlockRule> sqlBlockRules = Lists.newArrayList();
     @SerializedName(value = "catalogs")
-    private List<BackupCatalogMeta> catalogs = null;
+    private List<BackupCatalogMeta> catalogs = Lists.newArrayList();
     @SerializedName(value = "workloadGroups")
-    private List<WorkloadGroup> workloadGroups = null;
+    private List<WorkloadGroup> workloadGroups = Lists.newArrayList();
 
     public BackupGlobalInfo() {
     }
