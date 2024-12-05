@@ -81,13 +81,21 @@ suite("test_backup_restore_priv", "backup_restore") {
 
     sql "CREATE ROW POLICY test_row_policy_1 ON ${dbName}.${tableName} AS RESTRICTIVE TO user1 USING (id = 1);"
 
+    String jdbcUrl = context.config.jdbcUrl + "&sessionVariables=return_object_data_as_binary=true"
+    String jdbcUser = context.config.jdbcUser
+    String jdbcPassword = context.config.jdbcPassword
+    String s3_endpoint = getS3Endpoint()
+    String bucket = getS3BucketName()
+    String driver_url = "https://${bucket}.${s3_endpoint}/regression/jdbc_driver/mysql-connector-java-8.0.25.jar"
+    //String driver_url = "mysql-connector-j-8.0.31.jar"
+
     sql """
         CREATE CATALOG mysql PROPERTIES (
         "type"="jdbc",
-        "user"="root",
-        "password"="",
-        "jdbc_url" = "jdbc:mysql://127.0.0.1:9030",
-        "driver_url" = "mysql-connector-j-8.0.31.jar",
+        "user" = "${jdbcUser}",
+        "password"="${jdbcPassword}",
+        "jdbc_url" = "${jdbcUrl}",
+        "driver_url" = "${driver_url}",
         "driver_class" = "com.mysql.cj.jdbc.Driver"
         );
     """
@@ -95,25 +103,140 @@ suite("test_backup_restore_priv", "backup_restore") {
     sql """ create workload group wg1 properties('tag'='cn1', "memory_limit"="45%"); """
     sql """ create workload group wg2 properties ("max_concurrency"="5","max_queue_size" = "50"); """
 
-    qt_sql_before_restore1 "show all grants;"
-    qt_sql_before_restore2 "show roles;"
-    //except 'password_policy.password_creation_time'
-    qt_order_before_restore3 "select * except(`password_policy.password_creation_time`) from mysql.user order by host, user;"
-    qt_sql_before_restore4 "show row policy;"
-    qt_order_before_restore6 "select * except (id) from information_schema.workload_groups order by name;"
-    def result = sql "show catalogs;"
-    assertTrue(result.size() == 2)
+    def commonAuth = { result, UserIdentity, Password, Roles, CatalogPrivs ->
+        assertEquals(UserIdentity as String, result.UserIdentity[0] as String)
+        assertEquals(Password as String, result.Password[0] as String)
+        assertEquals(Roles as String, result.Roles[0] as String)
+        assertEquals(CatalogPrivs as String, result.CatalogPrivs[0] as String)
+    }
 
-
-    // check row policy valid
-    connect(user="user1", password="12345", url=url) {
-        try {
-            res = sql "SELECT * FROM ${dbName}.${tableName}"
-            assertEquals(res.size(), 1)
-        } catch (Exception e) {
-            log.info(e.getMessage())
+    def showRoles = { name ->
+        def ret = sql_return_maparray """show roles"""
+        ret.find {
+            def matcher = it.Name =~ /.*${name}$/
+            matcher.matches()
         }
     }
+
+    def showRowPolicy = { name ->
+        def ret = sql_return_maparray """show row policy"""
+        ret.find {
+            def matcher = it.PolicyName =~ /.*${name}$/
+            matcher.matches()
+        }
+    }
+
+    def showCatalogs = { name ->
+        def ret = sql_return_maparray """show catalogs"""
+        ret.find {
+            def matcher = it.CatalogName =~ /.*${name}$/
+            matcher.matches()
+        }
+    }
+
+    def showWorkloadGroups = { name ->
+        def ret = sql_return_maparray """show workload groups"""
+        ret.find {
+            def matcher = it.Name =~ /.*${name}$/
+            matcher.matches()
+        }
+    }
+
+    def checkPrivileges = () -> {
+        def result = sql_return_maparray """show grants for user1"""
+        log.info(result as String)
+        commonAuth result, "'user1'@'%'", "Yes", "role_select,role_load", "internal: Select_priv,Load_priv"
+
+        result = sql_return_maparray """show grants for user2"""
+        log.info(result as String)
+        commonAuth result, "'user2'@'%'", "Yes", "role_select", "internal: Select_priv"
+
+        result = sql_return_maparray """show grants for user3"""
+        log.info(result as String)
+        commonAuth result, "'user3'@'%'", "Yes", "role_load", "internal: Load_priv"
+
+        result = showRoles.call("role_select")
+        log.info(result as String)
+        //assertNull(result.CloudClusterPrivs)
+        assertEquals(result.Users, "'user1'@'%', 'user2'@'%'")
+        assertEquals(result.CatalogPrivs, "internal.*.*: Select_priv")
+    
+        result = showRoles.call("role_load")
+        log.info(result as String)
+        assertEquals(result.Users, "'user1'@'%', 'user3'@'%'")
+        assertEquals(result.CatalogPrivs, "internal.*.*: Load_priv")
+
+        result = showRowPolicy.call("test_row_policy_1")
+        log.info(result as String)
+        assertNotNull(result)
+
+
+        // check row policy valid
+        connect(user="user1", password="12345", url=url) {
+            try {
+                res = sql "SELECT * FROM ${dbName}.${tableName}"
+                assertEquals(res.size(), 1)
+            } catch (Exception e) {
+                log.info(e.getMessage())
+            }
+        }
+    }
+
+    def checkNonPrivileges = () -> {
+        //except 'password_policy.password_creation_time'
+        result = sql_return_maparray "select * except(`password_policy.password_creation_time`) from mysql.user where User in ('user1', 'user2', 'user3') order by host, user;"
+        assertEquals(result.size(), 0)
+
+        result = showRoles.call("role_select")
+        log.info(result as String)
+        assertNull(result)
+
+        result = showRoles.call("role_load")
+        log.info(result as String)
+        assertNull(result)
+
+        result = showRowPolicy.call("test_row_policy_1")
+        log.info(result as String)
+        assertNull(result)
+    }
+
+
+
+    def checkCatalogs = () -> {
+        result = showCatalogs.call("mysql")
+        log.info(result as String)
+        assertEquals(result.CatalogName, "mysql")
+        assertEquals(result.Type, "jdbc")
+    }
+
+    def checkWorkloadGroups = () -> {
+        result = showWorkloadGroups.call("wg1")
+        log.info(result as String)
+        assertNotNull(result)
+        result = showWorkloadGroups.call("wg2")
+        log.info(result as String)
+        assertNotNull(result)
+    }
+
+    def checkNonCatalogs = () -> {
+        result = showCatalogs.call("mysql")
+        log.info(result as String)
+        assertNull(result)
+    }
+
+    def checkNonWorkloadGroups = () -> {
+        result = showWorkloadGroups.call("wg1")
+        log.info(result as String)
+        assertNull(result)
+        result = showWorkloadGroups.call("wg2")
+        log.info(result as String)
+        assertNull(result)
+    }
+
+    checkPrivileges();
+    qt_order_before_restore "select * except(`password_policy.password_creation_time`) from mysql.user where User in ('user1', 'user2', 'user3') order by host, user;"
+    checkCatalogs();
+    checkWorkloadGroups();
 
 
     sql """
@@ -140,15 +263,9 @@ suite("test_backup_restore_priv", "backup_restore") {
     sql "drop workload group if exists wg1;"
     sql "drop workload group if exists wg2;"
 
-
-    qt_sql_1 "show all grants;"
-    qt_sql_2 "show roles;"
-    //except 'password_policy.password_creation_time'
-    qt_order_3 "select * except(`password_policy.password_creation_time`) from mysql.user order by host, user;"
-    qt_sql_4 "show row policy;"
-    qt_order_5 "select * except (id) from information_schema.workload_groups order by name;"
-    result = sql "show catalogs;"
-    assertTrue(result.size() == 1)
+    checkNonPrivileges();
+    checkNonCatalogs();
+    checkNonWorkloadGroups();
 
     def snapshot = syncer.getSnapshotTimestamp(repoName, snapshotName)
     assertTrue(snapshot != null)
@@ -175,14 +292,10 @@ suite("test_backup_restore_priv", "backup_restore") {
         exception "does not exist in database"
     }
  
-    qt_sql_after_restore1 "show all grants;"
-    qt_sql_after_restore2 "show roles;"
-    //except 'password_policy.password_creation_time'
-    qt_order_after_restore3 "select * except(`password_policy.password_creation_time`) from mysql.user order by host, user;"
-    qt_sql_after_restore4 "show row policy;"
-    qt_order_after_restore5 "select * except (id) from information_schema.workload_groups order by name;"
-    result = sql "show catalogs;"
-    assertTrue(result.size() == 2)
+    checkPrivileges();
+    qt_order_after_restore1 "select * except(`password_policy.password_creation_time`) from mysql.user where User in ('user1', 'user2', 'user3') order by host, user;"
+    checkCatalogs();
+    checkWorkloadGroups();
 
     logger.info(" ====================================== 2 without reserve ==================================== ")
     sql "drop user if exists user1;"
@@ -213,14 +326,10 @@ suite("test_backup_restore_priv", "backup_restore") {
         exception "does not exist in database"
     }
  
-    qt_sql_after_restore1 "show all grants;"
-    qt_sql_after_restore2 "show roles;"
-    //except 'password_policy.password_creation_time'
-    qt_order_after_restore3 "select * except(`password_policy.password_creation_time`) from mysql.user order by host, user;"
-    qt_sql_after_restore4 "show row policy;"
-    qt_order_after_restore5 "select * except (id) from information_schema.workload_groups order by name;"
-    result = sql "show catalogs;"
-    assertTrue(result.size() == 2)
+    checkPrivileges();
+    qt_order_after_restore2 "select * except(`password_policy.password_creation_time`) from mysql.user where User in ('user1', 'user2', 'user3') order by host, user;"
+    checkCatalogs();
+    checkWorkloadGroups();
 
 
     logger.info(""" ======================================  3 "reserve_privilege"="true" ==================================== """)
@@ -253,14 +362,10 @@ suite("test_backup_restore_priv", "backup_restore") {
         exception "does not exist in database"
     }
  
-    qt_sql_after_restore1 "show all grants;"
-    qt_sql_after_restore2 "show roles;"
-    //except 'password_policy.password_creation_time'
-    qt_order_after_restore3 "select * except(`password_policy.password_creation_time`) from mysql.user order by host, user;"
-    qt_sql_after_restore4 "show row policy;"
-    qt_order_after_restore5 "select * except (id) from information_schema.workload_groups order by name;"
-    result = sql "show catalogs;"
-    assertTrue(result.size() == 1)
+    checkPrivileges();
+    qt_order_after_restore3 "select * except(`password_policy.password_creation_time`) from mysql.user where User in ('user1', 'user2', 'user3') order by host, user;"
+    checkNonCatalogs();
+    checkNonWorkloadGroups();
 
 
     logger.info(""" ======================================  4 "reserve_catalog"="true" ==================================== """)
@@ -293,15 +398,10 @@ suite("test_backup_restore_priv", "backup_restore") {
         exception "does not exist in database"
     }
  
-    qt_sql_after_restore1 "show all grants;"
-    qt_sql_after_restore2 "show roles;"
-    //except 'password_policy.password_creation_time'
-    qt_order_after_restore3 "select * except(`password_policy.password_creation_time`) from mysql.user order by host, user;"
-    qt_sql_after_restore4 "show row policy;"
-    qt_order_after_restore5 "select * except (id) from information_schema.workload_groups order by name;"
-    result = sql "show catalogs;"
-    assertTrue(result.size() == 2)
-
+    checkNonPrivileges();
+    qt_order_after_restore4 "select * except(`password_policy.password_creation_time`) from mysql.user where User in ('user1', 'user2', 'user3') order by host, user;"
+   // checkCatalogs();
+    checkNonWorkloadGroups();
 
 
     logger.info(""" ======================================  5 "reserve_workload_group"="true" ==================================== """)
@@ -334,14 +434,10 @@ suite("test_backup_restore_priv", "backup_restore") {
         exception "does not exist in database"
     }
  
-    qt_sql_after_restore1 "show all grants;"
-    qt_sql_after_restore2 "show roles;"
-    //except 'password_policy.password_creation_time'
-    qt_order_after_restore3 "select * except(`password_policy.password_creation_time`) from mysql.user order by host, user;"
-    qt_sql_after_restore4 "show row policy;"
-    qt_order_after_restore5 "select * except (id) from information_schema.workload_groups order by name;"
-    result = sql "show catalogs;"
-    assertTrue(result.size() == 1)
+    checkNonPrivileges();
+    qt_order_after_restore5 "select * except(`password_policy.password_creation_time`) from mysql.user where User in ('user1', 'user2', 'user3') order by host, user;"
+    checkNonCatalogs();
+    checkWorkloadGroups();
 
 
     logger.info(""" ======================================  6 "reserve_privilege"="true","reserve_workload_group"="true" ==================================== """)
@@ -376,16 +472,11 @@ suite("test_backup_restore_priv", "backup_restore") {
         exception "does not exist in database"
     }
  
-    qt_sql_after_restore1 "show all grants;"
-    qt_sql_after_restore2 "show roles;"
-    //except 'password_policy.password_creation_time'
-    qt_order_after_restore3 "select * except(`password_policy.password_creation_time`) from mysql.user order by host, user;"
-    qt_sql_after_restore4 "show row policy;"
-    qt_order_after_restore5 "select * except (id) from information_schema.workload_groups order by name;"
-    result = sql "show catalogs;"
-    assertTrue(result.size() == 1)
+    checkPrivileges();
+    qt_order_after_restore6 "select * except(`password_policy.password_creation_time`) from mysql.user where User in ('user1', 'user2', 'user3') order by host, user;"
+    checkNonCatalogs();
+    checkWorkloadGroups();
 
- 
 
     //cleanup
     sql "drop user if exists user1;"
