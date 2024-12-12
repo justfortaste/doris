@@ -364,10 +364,42 @@ public class BackupJobInfo implements Writable, GsonPostProcessable {
             briefBackupJobInfo.viewList = backupJobInfo.newBackupObjects.views;
             briefBackupJobInfo.odbcTableList = backupJobInfo.newBackupObjects.odbcTables;
             briefBackupJobInfo.odbcResourceList = backupJobInfo.newBackupObjects.odbcResources;
-            briefBackupJobInfo.userList = backupJobInfo.newBackupObjects.users;
-            briefBackupJobInfo.roleList = backupJobInfo.newBackupObjects.roles;
-            briefBackupJobInfo.catalogList = backupJobInfo.newBackupObjects.catalogs;
-            briefBackupJobInfo.workloadGroupList = backupJobInfo.newBackupObjects.workloadGroups;
+
+            BackupGlobalInfo backupGlobalInfo = backupJobInfo.newBackupObjects.backupGlobalInfo;
+            if (backupGlobalInfo != null) {
+                //users
+                List<User> userList = backupGlobalInfo.getUserList();
+                for (User user : userList) {
+                    BackupUserInfo backupUserInfo = new BackupUserInfo();
+                    backupUserInfo.userIdentity = user.getUserIdentity();
+                    briefBackupJobInfo.userList.add(backupUserInfo);
+                }
+
+                // roles
+                List<Role> roleList = backupGlobalInfo.getRoleList();
+                for (Role role : roleList) {
+                    BackupRoleInfo backupRoleInfo = new BackupRoleInfo();
+                    backupRoleInfo.name = role.getRoleName();
+                    briefBackupJobInfo.roleList.add(backupRoleInfo);
+                }
+
+                // catalogs
+                List<BackupCatalogMeta> catalogs = backupGlobalInfo.getCatalogs();
+                for (BackupCatalogMeta catalog : catalogs) {
+                    BackupCatalogInfo backupCatalogInfo = new BackupCatalogInfo();
+                    backupCatalogInfo.name = catalog.getCatalogName();
+                    briefBackupJobInfo.catalogList.add(backupCatalogInfo);
+                }
+
+                // workloadGroups
+                List<WorkloadGroup> workloadGroups = backupGlobalInfo.getWorkloadGroups();
+                for (WorkloadGroup workloadGroup : workloadGroups) {
+                    BackupWorkloadGroupInfo backupWorkloadGroupInfo = new BackupWorkloadGroupInfo();
+                    backupWorkloadGroupInfo.name = workloadGroup.getName();
+                    briefBackupJobInfo.workloadGroupList.add(backupWorkloadGroupInfo);
+                }
+            }
+
             return briefBackupJobInfo;
         }
     }
@@ -386,14 +418,8 @@ public class BackupJobInfo implements Writable, GsonPostProcessable {
         public List<BackupOdbcTableInfo> odbcTables = Lists.newArrayList();
         @SerializedName("odbc_resources")
         public List<BackupOdbcResourceInfo> odbcResources = Lists.newArrayList();
-        @SerializedName("user")
-        public List<BackupUserInfo> users = Lists.newArrayList();
-        @SerializedName("role")
-        public List<BackupRoleInfo> roles = Lists.newArrayList();
-        @SerializedName("catalogs")
-        public List<BackupCatalogInfo> catalogs = Lists.newArrayList();
-        @SerializedName("workloadGroups")
-        public List<BackupWorkloadGroupInfo> workloadGroups = Lists.newArrayList();
+        @SerializedName("BackupGlobalInfo")
+        public BackupGlobalInfo backupGlobalInfo = null;
     }
 
     public static class BackupOlapTableInfo {
@@ -732,37 +758,7 @@ public class BackupJobInfo implements Writable, GsonPostProcessable {
                 jobInfo.newBackupObjects.odbcResources.add(backupOdbcResourceInfo);
             }
         }
-        // users
-        List<User> userList = backupMeta.getUserList();
-        for (User user : userList) {
-            BackupUserInfo backupUserInfo = new BackupUserInfo();
-            backupUserInfo.userIdentity = user.getUserIdentity();
-            jobInfo.newBackupObjects.users.add(backupUserInfo);
-        }
-
-        // roles
-        List<Role> roleList = backupMeta.getRoleList();
-        for (Role role : roleList) {
-            BackupRoleInfo backupRoleInfo = new BackupRoleInfo();
-            backupRoleInfo.name = role.getRoleName();
-            jobInfo.newBackupObjects.roles.add(backupRoleInfo);
-        }
-
-        // catalogs
-        List<BackupCatalogMeta> catalogs = backupMeta.getCatalogs();
-        for (BackupCatalogMeta catalog : catalogs) {
-            BackupCatalogInfo backupCatalogInfo = new BackupCatalogInfo();
-            backupCatalogInfo.name = catalog.getCatalogName();
-            jobInfo.newBackupObjects.catalogs.add(backupCatalogInfo);
-        }
-
-        // workloadGroups
-        List<WorkloadGroup> workloadGroups = backupMeta.getWorkloadGroups();
-        for (WorkloadGroup workloadGroup : workloadGroups) {
-            BackupWorkloadGroupInfo backupWorkloadGroupInfo = new BackupWorkloadGroupInfo();
-            backupWorkloadGroupInfo.name = workloadGroup.getName();
-            jobInfo.newBackupObjects.workloadGroups.add(backupWorkloadGroupInfo);
-        }
+        jobInfo.newBackupObjects.backupGlobalInfo = backupMeta.getBackupGlobalInfo();
 
         return jobInfo;
     }

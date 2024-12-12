@@ -1299,7 +1299,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
     }
 
     private void checkAndRestorePrivileges() {
-        List<User> users = backupMeta.getUserList();
+        List<User> users = jobInfo.newBackupObjects.backupGlobalInfo.getUserList();
         List<UserIdentity> localUsers = Lists.newArrayList();
 
         for (User user : users) {
@@ -1317,7 +1317,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
             }
         }
 
-        List<UserProperty> userProperties = backupMeta.getUserProperties();
+        List<UserProperty> userProperties = jobInfo.newBackupObjects.backupGlobalInfo.getUserProperties();
         for (UserProperty userProperty : userProperties) {
             for (UserIdentity localIdentity : localUsers) {
                 if (localIdentity.getUser().equals(userProperty.getQualifiedUser())) {
@@ -1351,7 +1351,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
             }
         }
 
-        Map<UserIdentity, PasswordPolicy> policyMap = backupMeta.getPolicyMap();
+        Map<UserIdentity, PasswordPolicy> policyMap = jobInfo.newBackupObjects.backupGlobalInfo.getPolicyMap();
         for (Map.Entry<UserIdentity, PasswordPolicy> entry : policyMap.entrySet()) {
             UserIdentity identity = entry.getKey();
             PasswordPolicy passwordPolicy = entry.getValue();
@@ -1371,7 +1371,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
             }
         }
 
-        List<Policy> rowPolicies = backupMeta.getRowPolicies();
+        List<Policy> rowPolicies = jobInfo.newBackupObjects.backupGlobalInfo.getRowPolicies();
         for (Policy policy : rowPolicies) {
             RowPolicy rowPolicy = (RowPolicy) policy;
             if (Env.getCurrentEnv().getPolicyMgr().existPolicy(policy)) {
@@ -1385,12 +1385,13 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
             }
         }
 
-        List<Role> roles = backupMeta.getRoleList();
+        List<Role> roles = jobInfo.newBackupObjects.backupGlobalInfo.getRoleList();
         for (Role role : roles) {
             try {
                 Env.getCurrentEnv().getAuth().createRoleInternal(role.getRoleName(),
                         true, role.getComment(), false);
-                Env.getCurrentEnv().getAuth().grant(role, backupMeta.getUsersByRole(role.getRoleName()));
+                Env.getCurrentEnv().getAuth().grant(role, jobInfo.newBackupObjects.backupGlobalInfo
+                        .getUsersByRole(role.getRoleName()));
             } catch (DdlException e) {
                 LOG.error("should not happen", e);
             }
@@ -1398,7 +1399,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
     }
 
     private void checkAndRestoreCatalogs() {
-        List<BackupCatalogMeta> catalogs = backupMeta.getCatalogs();
+        List<BackupCatalogMeta> catalogs = jobInfo.newBackupObjects.backupGlobalInfo.getCatalogs();
         for (BackupCatalogMeta catalog : catalogs) {
             if (Env.getCurrentEnv().getCatalogMgr().getCatalog(catalog.getCatalogName()) != null) {
                 continue;
@@ -1414,7 +1415,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
     }
 
     private void checkAndRestoreWorkloadGroups() {
-        List<WorkloadGroup> workloadGroups = backupMeta.getWorkloadGroups();
+        List<WorkloadGroup> workloadGroups = jobInfo.newBackupObjects.backupGlobalInfo.getWorkloadGroups();
         for (WorkloadGroup workloadGroup : workloadGroups) {
             if (Env.getCurrentEnv().getWorkloadGroupMgr().isWorkloadGroupExists(workloadGroup.getName())) {
                 continue;
@@ -1431,6 +1432,9 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
     }
 
     private void checkAndRestoreGlobalInfo() {
+        if (jobInfo.newBackupObjects.backupGlobalInfo == null) {
+            return;
+        }
         if (reservePrivilege) {
             checkAndRestorePrivileges();
         }
