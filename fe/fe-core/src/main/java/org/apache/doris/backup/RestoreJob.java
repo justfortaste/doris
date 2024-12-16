@@ -130,6 +130,7 @@ import java.util.zip.GZIPInputStream;
 
 public class RestoreJob extends AbstractJob implements GsonPostProcessable {
     private static final String PROP_RESERVE_REPLICA = RestoreStmt.PROP_RESERVE_REPLICA;
+    private static final String PROP_RESERVE_COLOCATE = RestoreStmt.PROP_RESERVE_COLOCATE;
     private static final String PROP_RESERVE_DYNAMIC_PARTITION_ENABLE =
             RestoreStmt.PROP_RESERVE_DYNAMIC_PARTITION_ENABLE;
     private static final String PROP_IS_BEING_SYNCED = PropertyAnalyzer.PROPERTIES_IS_BEING_SYNCED;
@@ -188,6 +189,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
     private ReplicaAllocation replicaAlloc;
 
     private boolean reserveReplica = false;
+    private boolean reserveColocate = false;
     private boolean reserveDynamicPartitionEnable = false;
 
     // this 2 members is to save all newly restored objs
@@ -249,6 +251,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
 
     public RestoreJob(String label, String backupTs, long dbId, String dbName, BackupJobInfo jobInfo, boolean allowLoad,
             ReplicaAllocation replicaAlloc, long timeoutMs, int metaVersion, boolean reserveReplica,
+            boolean reserveColocate,
             boolean reserveDynamicPartitionEnable, boolean reservePrivilege, boolean reserveCatalog,
             boolean reserveWorkloadGroup, boolean isBeingSynced, boolean isCleanTables,
             boolean isCleanPartitions, boolean isAtomicRestore, Env env, long repoId) {
@@ -260,6 +263,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
         this.state = RestoreJobState.PENDING;
         this.metaVersion = metaVersion;
         this.reserveReplica = reserveReplica;
+        this.reserveColocate = reserveColocate;
         // if backup snapshot is come from a cluster with force replication allocation, ignore the origin allocation
         if (jobInfo.isForceReplicationAllocation) {
             this.reserveReplica = false;
@@ -273,6 +277,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
         this.reserveCatalog = reserveCatalog;
         this.reserveWorkloadGroup = reserveWorkloadGroup;
         properties.put(PROP_RESERVE_REPLICA, String.valueOf(reserveReplica));
+        properties.put(PROP_RESERVE_COLOCATE, String.valueOf(reserveColocate));
         properties.put(PROP_RESERVE_DYNAMIC_PARTITION_ENABLE, String.valueOf(reserveDynamicPartitionEnable));
         properties.put(PROP_IS_BEING_SYNCED, String.valueOf(isBeingSynced));
         properties.put(PROP_CLEAN_TABLES, String.valueOf(isCleanTables));
@@ -285,12 +290,13 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
 
     public RestoreJob(String label, String backupTs, long dbId, String dbName, BackupJobInfo jobInfo, boolean allowLoad,
             ReplicaAllocation replicaAlloc, long timeoutMs, int metaVersion, boolean reserveReplica,
+            boolean reserveColocate,
             boolean reserveDynamicPartitionEnable,  boolean reservePrivilege, boolean reserveCatalog,
             boolean reserveWorkloadGroup, boolean isBeingSynced, boolean isCleanTables,
             boolean isCleanPartitions, boolean isAtomicRestore, Env env, long repoId, BackupMeta backupMeta) {
         this(label, backupTs, dbId, dbName, jobInfo, allowLoad, replicaAlloc, timeoutMs, metaVersion, reserveReplica,
-                reserveDynamicPartitionEnable, reservePrivilege, reserveCatalog, reserveWorkloadGroup, isBeingSynced,
-                isCleanTables, isCleanPartitions, isAtomicRestore, env, repoId);
+                reserveColocate, reserveDynamicPartitionEnable, reservePrivilege, reserveCatalog, reserveWorkloadGroup,
+                isBeingSynced, isCleanTables, isCleanPartitions, isAtomicRestore, env, repoId);
         this.backupMeta = backupMeta;
     }
 
@@ -720,6 +726,12 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                     OlapTable localOlapTbl = (OlapTable) localTbl;
                     OlapTable remoteOlapTbl = (OlapTable) remoteTbl;
 
+                    if (localOlapTbl.isColocateTable() || (reserveColocate && remoteOlapTbl.isColocateTable())) {
+                        status = new Status(ErrCode.COMMON_ERROR, "Not support to restore to local table "
+                                + tableName + " with colocate group.");
+                        return;
+                    }
+
                     localOlapTbl.readLock();
                     try {
                         List<String> intersectPartNames = Lists.newArrayList();
@@ -836,7 +848,8 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
 
                     // reset all ids in this table
                     String srcDbName = jobInfo.dbName;
-                    Status st = remoteOlapTbl.resetIdsForRestore(env, db, replicaAlloc, reserveReplica, srcDbName);
+                    Status st = remoteOlapTbl.resetIdsForRestore(env, db, replicaAlloc, reserveReplica,
+                            reserveColocate, srcDbName);
                     if (!st.ok()) {
                         status = st;
                         return;
