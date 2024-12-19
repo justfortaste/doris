@@ -935,19 +935,14 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
             }
 
             if (createNewColocateGroup) {
-                colocateIndex.addBackendsPerBucketSeq(groupId, getId(), backendsPerBucketSeq);
-//                ColocatePersistInfo info =
-//                        ColocatePersistInfo.createForAddTable(groupId, getId(), backendsPerBucketSeq);
-//                //Env.getCurrentEnv().getEditLog().logColocateBackendsPerBucketSeq(info);
-//                colocatePersistInfos.add(info);
+                colocateIndex.addBackendsPerBucketSeq(groupId, backendsPerBucketSeq);
             }
 
             // we have added these index to memory, only need to persist here
             if (groupId != null) {
                 backendsPerBucketSeq = colocateIndex.getBackendsPerBucketSeq(groupId);
                 ColocatePersistInfo info = ColocatePersistInfo.createForAddTable(groupId, getId(),
-                    backendsPerBucketSeq);
-                //Env.getCurrentEnv().getEditLog().logColocateAddTable(info);
+                            backendsPerBucketSeq);
                 colocatePersistInfos.add(info);
             }
 

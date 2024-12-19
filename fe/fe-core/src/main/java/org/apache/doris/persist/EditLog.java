@@ -1687,6 +1687,7 @@ public class EditLog {
             logColocateAddTable(info);
         }
     }
+
     public void logUpdateUserProperty(UserPropertyInfo propertyInfo) {
         logEdit(OperationType.OP_UPDATE_USER_PROPERTY, propertyInfo);
     }

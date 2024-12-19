@@ -252,13 +252,12 @@ public class ColocateTableIndex implements Writable {
         }
     }
 
-    public void addBackendsPerBucketSeq(GroupId groupId, long tableId, Map<Tag, List<List<Long>>> backendsPerBucketSeq) {
+    public void addBackendsPerBucketSeq(GroupId groupId, Map<Tag, List<List<Long>>> backendsPerBucketSeq) {
         writeLock();
         try {
             for (Map.Entry<Tag, List<List<Long>>> entry : backendsPerBucketSeq.entrySet()) {
                 group2BackendsPerBucketSeq.put(groupId, entry.getKey(), entry.getValue());
             }
-            table2Group.put(tableId, groupId);
         } finally {
             writeUnlock();
         }
@@ -643,7 +642,7 @@ public class ColocateTableIndex implements Writable {
     }
 
     public void replayAddBackendsPerBucketSeq(ColocatePersistInfo info) {
-        addBackendsPerBucketSeq(info.getGroupId(), info.getTableId(), info.getBackendsPerBucketSeq());
+        addBackendsPerBucketSeq(info.getGroupId(), info.getBackendsPerBucketSeq());
     }
 
     public void replayMarkGroupUnstable(ColocatePersistInfo info) {

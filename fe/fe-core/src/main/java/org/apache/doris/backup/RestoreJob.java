@@ -29,12 +29,35 @@ import org.apache.doris.backup.BackupJobInfo.BackupPartitionInfo;
 import org.apache.doris.backup.BackupJobInfo.BackupTabletInfo;
 import org.apache.doris.backup.RestoreFileMapping.IdChain;
 import org.apache.doris.backup.Status.ErrCode;
-import org.apache.doris.catalog.*;
+import org.apache.doris.catalog.BinlogConfig;
+import org.apache.doris.catalog.DataProperty;
+import org.apache.doris.catalog.Database;
+import org.apache.doris.catalog.Env;
+import org.apache.doris.catalog.EnvFactory;
+import org.apache.doris.catalog.FsBroker;
+import org.apache.doris.catalog.Index;
+import org.apache.doris.catalog.MaterializedIndex;
 import org.apache.doris.catalog.MaterializedIndex.IndexExtState;
+import org.apache.doris.catalog.MaterializedIndexMeta;
+import org.apache.doris.catalog.OdbcCatalogResource;
+import org.apache.doris.catalog.OdbcTable;
+import org.apache.doris.catalog.OlapTable;
 import org.apache.doris.catalog.OlapTable.OlapTableState;
+import org.apache.doris.catalog.Partition;
 import org.apache.doris.catalog.Partition.PartitionState;
+import org.apache.doris.catalog.PartitionInfo;
+import org.apache.doris.catalog.PartitionItem;
+import org.apache.doris.catalog.PartitionType;
+import org.apache.doris.catalog.Replica;
 import org.apache.doris.catalog.Replica.ReplicaState;
+import org.apache.doris.catalog.ReplicaAllocation;
+import org.apache.doris.catalog.Resource;
+import org.apache.doris.catalog.ResourceMgr;
+import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.TableIf.TableType;
+import org.apache.doris.catalog.Tablet;
+import org.apache.doris.catalog.TabletMeta;
+import org.apache.doris.catalog.View;
 import org.apache.doris.clone.DynamicPartitionScheduler;
 import org.apache.doris.common.Config;
 import org.apache.doris.common.DdlException;
@@ -1799,12 +1822,6 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                         }
                     }
                 }
-//                if (olapRestoreTbl.isColocateTable()) {
-//                    String fullGroupName = ColocateTableIndex.GroupId.getFullGroupName(db.getId(),
-//                            olapRestoreTbl.getColocateGroup());
-//                    Env.getCurrentColocateIndex().addTableToGroup(db.getId(), olapRestoreTbl, fullGroupName,
-//                            Env.getCurrentColocateIndex().getGroup(olapRestoreTbl.getId()));
-//                }
             } finally {
                 olapRestoreTbl.writeUnlock();
             }
@@ -2298,6 +2315,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
             state = RestoreJobState.FINISHED;
 
             env.getEditLog().logRestoreJob(this);
+            colocatePersistInfos.clear();
         }
 
         LOG.info("job is finished. is replay: {}. {}", isReplay, this);
@@ -2570,6 +2588,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
             state = RestoreJobState.CANCELLED;
             // log
             env.getEditLog().logRestoreJob(this);
+            colocatePersistInfos.clear();
 
             LOG.info("finished to cancel restore job. current state: {}. is replay: {}. {}",
                      curState.name(), isReplay, this);
