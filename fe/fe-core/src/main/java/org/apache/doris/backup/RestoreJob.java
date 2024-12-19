@@ -29,35 +29,12 @@ import org.apache.doris.backup.BackupJobInfo.BackupPartitionInfo;
 import org.apache.doris.backup.BackupJobInfo.BackupTabletInfo;
 import org.apache.doris.backup.RestoreFileMapping.IdChain;
 import org.apache.doris.backup.Status.ErrCode;
-import org.apache.doris.catalog.BinlogConfig;
-import org.apache.doris.catalog.DataProperty;
-import org.apache.doris.catalog.Database;
-import org.apache.doris.catalog.Env;
-import org.apache.doris.catalog.EnvFactory;
-import org.apache.doris.catalog.FsBroker;
-import org.apache.doris.catalog.Index;
-import org.apache.doris.catalog.MaterializedIndex;
+import org.apache.doris.catalog.*;
 import org.apache.doris.catalog.MaterializedIndex.IndexExtState;
-import org.apache.doris.catalog.MaterializedIndexMeta;
-import org.apache.doris.catalog.OdbcCatalogResource;
-import org.apache.doris.catalog.OdbcTable;
-import org.apache.doris.catalog.OlapTable;
 import org.apache.doris.catalog.OlapTable.OlapTableState;
-import org.apache.doris.catalog.Partition;
 import org.apache.doris.catalog.Partition.PartitionState;
-import org.apache.doris.catalog.PartitionInfo;
-import org.apache.doris.catalog.PartitionItem;
-import org.apache.doris.catalog.PartitionType;
-import org.apache.doris.catalog.Replica;
 import org.apache.doris.catalog.Replica.ReplicaState;
-import org.apache.doris.catalog.ReplicaAllocation;
-import org.apache.doris.catalog.Resource;
-import org.apache.doris.catalog.ResourceMgr;
-import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.TableIf.TableType;
-import org.apache.doris.catalog.Tablet;
-import org.apache.doris.catalog.TabletMeta;
-import org.apache.doris.catalog.View;
 import org.apache.doris.clone.DynamicPartitionScheduler;
 import org.apache.doris.common.Config;
 import org.apache.doris.common.DdlException;
@@ -76,6 +53,7 @@ import org.apache.doris.mysql.privilege.PasswordPolicy;
 import org.apache.doris.mysql.privilege.Role;
 import org.apache.doris.mysql.privilege.User;
 import org.apache.doris.mysql.privilege.UserProperty;
+import org.apache.doris.persist.ColocatePersistInfo;
 import org.apache.doris.persist.gson.GsonPostProcessable;
 import org.apache.doris.persist.gson.GsonUtils;
 import org.apache.doris.policy.Policy;
@@ -211,6 +189,8 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
 
     private Map<Long, Long> unfinishedSignatureToId = Maps.newConcurrentMap();
 
+    private List<ColocatePersistInfo> colocatePersistInfos = Lists.newArrayList();
+
     // the meta version is used when reading backup meta from file.
     // we do not persist this field, because this is just a temporary solution.
     // the true meta version should be get from backup job info, which is saved when doing backup job.
@@ -314,6 +294,10 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
 
     public boolean isBeingSynced() {
         return isBeingSynced;
+    }
+
+    public List<ColocatePersistInfo> getColocatePersistInfos() {
+        return colocatePersistInfos;
     }
 
     public synchronized boolean finishTabletSnapshotTask(SnapshotTask task, TFinishTaskRequest request) {
@@ -849,7 +833,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                     // reset all ids in this table
                     String srcDbName = jobInfo.dbName;
                     Status st = remoteOlapTbl.resetIdsForRestore(env, db, replicaAlloc, reserveReplica,
-                            reserveColocate, srcDbName);
+                            reserveColocate, colocatePersistInfos, srcDbName);
                     if (!st.ok()) {
                         status = st;
                         return;
@@ -1815,6 +1799,12 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                         }
                     }
                 }
+//                if (olapRestoreTbl.isColocateTable()) {
+//                    String fullGroupName = ColocateTableIndex.GroupId.getFullGroupName(db.getId(),
+//                            olapRestoreTbl.getColocateGroup());
+//                    Env.getCurrentColocateIndex().addTableToGroup(db.getId(), olapRestoreTbl, fullGroupName,
+//                            Env.getCurrentColocateIndex().getGroup(olapRestoreTbl.getId()));
+//                }
             } finally {
                 olapRestoreTbl.writeUnlock();
             }

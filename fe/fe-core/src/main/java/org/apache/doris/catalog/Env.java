@@ -4915,7 +4915,7 @@ public class Env {
 
                 if (groupSchema == null) {
                     Preconditions.checkNotNull(backendsPerBucketSeq);
-                    colocateTableIndex.addBackendsPerBucketSeq(groupId, backendsPerBucketSeq);
+                    colocateTableIndex.addBackendsPerBucketSeq(groupId, table.getId(), backendsPerBucketSeq);
                 }
 
                 // set this group as unstable

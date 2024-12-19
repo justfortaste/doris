@@ -770,7 +770,8 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
     }
 
     public Status resetIdsForRestore(Env env, Database db, ReplicaAllocation restoreReplicaAlloc,
-            boolean reserveReplica, boolean reserveColocate, String srcDbName) {
+            boolean reserveReplica, boolean reserveColocate, List<ColocatePersistInfo> colocatePersistInfos,
+            String srcDbName) {
         // ATTN: The meta of the restore may come from different clusters, so the
         // original ID in the meta may conflict with the ID of the new cluster. For
         // example, if a newly allocated ID happens to be the same as an original ID,
@@ -934,10 +935,20 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
             }
 
             if (createNewColocateGroup) {
-                colocateIndex.addBackendsPerBucketSeq(groupId, backendsPerBucketSeq);
-                ColocatePersistInfo info =
-                        ColocatePersistInfo.createForBackendsPerBucketSeq(groupId, backendsPerBucketSeq);
-                Env.getCurrentEnv().getEditLog().logColocateBackendsPerBucketSeq(info);
+                colocateIndex.addBackendsPerBucketSeq(groupId, getId(), backendsPerBucketSeq);
+//                ColocatePersistInfo info =
+//                        ColocatePersistInfo.createForAddTable(groupId, getId(), backendsPerBucketSeq);
+//                //Env.getCurrentEnv().getEditLog().logColocateBackendsPerBucketSeq(info);
+//                colocatePersistInfos.add(info);
+            }
+
+            // we have added these index to memory, only need to persist here
+            if (groupId != null) {
+                backendsPerBucketSeq = colocateIndex.getBackendsPerBucketSeq(groupId);
+                ColocatePersistInfo info = ColocatePersistInfo.createForAddTable(groupId, getId(),
+                    backendsPerBucketSeq);
+                //Env.getCurrentEnv().getEditLog().logColocateAddTable(info);
+                colocatePersistInfos.add(info);
             }
 
             // reset partition id

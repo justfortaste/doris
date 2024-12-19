@@ -3468,7 +3468,7 @@ public class InternalCatalog implements CatalogIf<Database> {
         }
 
         if (groupId != null && chooseBackendsArbitrary) {
-            colocateIndex.addBackendsPerBucketSeq(groupId, backendsPerBucketSeq);
+            colocateIndex.addBackendsPerBucketSeq(groupId, tabletMeta.getTableId(), backendsPerBucketSeq);
             ColocatePersistInfo info = ColocatePersistInfo.createForBackendsPerBucketSeq(groupId, backendsPerBucketSeq);
             Env.getCurrentEnv().getEditLog().logColocateBackendsPerBucketSeq(info);
         }

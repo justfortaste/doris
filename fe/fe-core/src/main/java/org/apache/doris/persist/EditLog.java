@@ -1683,8 +1683,10 @@ public class EditLog {
 
     public void logRestoreJob(RestoreJob job) {
         logEdit(OperationType.OP_RESTORE_JOB, job);
+        for (ColocatePersistInfo info : job.getColocatePersistInfos()) {
+            logColocateAddTable(info);
+        }
     }
-
     public void logUpdateUserProperty(UserPropertyInfo propertyInfo) {
         logEdit(OperationType.OP_UPDATE_USER_PROPERTY, propertyInfo);
     }
